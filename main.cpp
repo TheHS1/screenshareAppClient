@@ -38,7 +38,7 @@ void clean() {
 }
 
 void display(AVCodecContext* ctx, AVPacket* pkt, AVFrame* frame, SDL_Rect* rect, SDL_Texture* texture, SDL_Renderer* renderer, double fpsrend) {
-    int framenum = ctx->frame_num;
+    int framenum = ctx->frame_number;
     SDL_UpdateYUVTexture(texture, rect,
         frame->data[0], frame->linesize[0],
         frame->data[1], frame->linesize[1],
@@ -178,24 +178,27 @@ int main(int argc, char **argv) {
             if(evt.type == SDL_QUIT)
                 done = true;
             else if(evt.type == SDL_KEYDOWN) {
-                //string send = "a" + to_string('0' + htonl(evt.key.keysym.sym));
-                char ok = evt.key.keysym.sym;
+	        if(sockets[0]) {
+			//string send = "a" + to_string('0' + htonl(evt.key.keysym.sym));
+			char ok = evt.key.keysym.sym;
 
-                // Combine 'a' with the character and return as a char*
-                std::string combined_string = "0";
-                combined_string += ok;
+			// Combine 'a' with the character and return as a char*
+			std::string combined_string = "0";
+			combined_string += ok;
 
-                // Allocate memory for the resulting string (including null terminator)
-                char* send = new char[combined_string.length() + 1];
+			// Allocate memory for the resulting string (including null terminator)
+			char* send = new char[combined_string.length() + 1];
 
-                // Copy the combined string to the allocated memory
-                std::strcpy(send, combined_string.c_str());
+			// Copy the combined string to the allocated memory
+			std::strcpy(send, combined_string.c_str());
 
-                int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
-                if(len == 0) {
-                    cout << SDLNet_GetError();
-                }
+			int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
+			if(len == 0) {
+				cout << SDLNet_GetError();
+			}
+		}
             } else if (evt.type == SDL_MOUSEMOTION) {
+		    if(sockets[0]) {
                 string ok = "1" + to_string((float) evt.motion.x / 1920) + "a" + to_string((float) evt.motion.y / 1080);
                 char* send = new char[ok.length() + 1];
                 strcpy(send, ok.c_str());
@@ -206,17 +209,20 @@ int main(int argc, char **argv) {
                         cout << SDLNet_GetError();
                     }
                 }
+		    }
             } else if(evt.type == SDL_MOUSEBUTTONDOWN) {
-                string ok;
-                if(evt.button.button == SDL_BUTTON_LEFT) {
-                    ok = "2";
-                    char* send = new char[ok.length() + 1];
-                    strcpy(send, ok.c_str());
-                    int len = SDLNet_TCP_Send(sockets[0], send, 1);
-                    if(len == 0) {
-                        cout << SDLNet_GetError();
-                    }
-                }
+		    if(sockets[0]) {
+			    string ok;
+			    if(evt.button.button == SDL_BUTTON_LEFT) {
+				    ok = "2";
+				    char* send = new char[ok.length() + 1];
+				    strcpy(send, ok.c_str());
+				    int len = SDLNet_TCP_Send(sockets[0], send, 1);
+				    if(len == 0) {
+					    cout << SDLNet_GetError();
+				    }
+			    }
+		    }
             }
         }
 
