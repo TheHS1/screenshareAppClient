@@ -1,10 +1,7 @@
-#include <time.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_net.h>
 #include <cstring>
 #include <iostream>
-#include "fstream"
-#include<time.h>
 
 extern "C" {
 	    #include <libavcodec/avcodec.h>
@@ -22,7 +19,6 @@ const AVCodec *codec;
 AVCodecParserContext *parser;
 AVCodecContext *c = NULL;
 AVFrame *frame;
-uint8_t inbuf[INBUF_SIZE + AV_INPUT_BUFFER_PADDING_SIZE];
 uint8_t *data;
 size_t data_size;
 AVPacket *pkt;
@@ -79,7 +75,6 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	memset(inbuf + INBUF_SIZE, 0, AV_INPUT_BUFFER_PADDING_SIZE);
 	codec = avcodec_find_decoder(AV_CODEC_ID_H264);
 	if(!codec) {
 		cout << "error finding codec" << endl;
@@ -253,8 +248,8 @@ int main(int argc, char **argv) {
                         (ipaddr >> 16) & 0xff, (ipaddr >> 8) & 0xff, ipaddr & 0xff,
                         remoteip->port);
             } else {
-                char message[1000000];
-                int len = SDLNet_TCP_Recv(sockets[0], message, 1000000);
+                char message[INBUF_SIZE];
+                int len = SDLNet_TCP_Recv(sockets[0], message, INBUF_SIZE);
                 if (!len) {
                     break;
                 }
