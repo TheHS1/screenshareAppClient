@@ -26,6 +26,7 @@ uint8_t *data;
 size_t data_size;
 AVPacket *pkt;
 SDL_Rect rect;
+TCPsocket client = NULL;
 
 void clean() {
     SDL_DestroyTexture(texture);
@@ -153,31 +154,6 @@ int main(int argc, char **argv) {
 
     cout << "Starting server..." << endl;
 
-    const int MAX_SOCKETS = 1;
-    TCPsocket server;
-    IPaddress ip;
-    SDLNet_SocketSet socket_set;
-    TCPsocket sockets[MAX_SOCKETS];
-    if (SDLNet_ResolveHost(&ip, NULL, 8080) == -1) {
-        cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
-        exit(1);
-    }
-    server = SDLNet_TCP_Open(&ip);
-    if (!server) {
-        cout << "SDLNet_TCP_Open: " << SDLNet_GetError();
-        exit(1);
-    }
-
-    socket_set = SDLNet_AllocSocketSet(MAX_SOCKETS+1);
-    if(socket_set == NULL) {
-        cout << "Could not allocate socket set";
-        exit(1);
-    }
-    if(SDLNet_TCP_AddSocket(socket_set, server) == -1) {
-        cout << "Could not add server socket to set";
-        exit(1);
-    }
-
     //IMGUI state variables
     char port[20];
     char ipToTry[20];
@@ -191,13 +167,13 @@ int main(int argc, char **argv) {
                     done = true;
 
                 case SDL_KEYDOWN: {
-                    if(sockets[0]) {
+                    if(client) {
                         switch(evt.key.keysym.sym) {
                             case SDLK_LSHIFT:
                             case SDLK_RSHIFT: {
                                 const char send[] = "6";
 
-                                int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
+                                int len = SDLNet_TCP_Send(client, send, sizeof(send));
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
@@ -216,7 +192,7 @@ int main(int argc, char **argv) {
                                 // Copy the combined string to the allocated memory
                                 std::strcpy(send, combined_string.c_str());
 
-                                int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
+                                int len = SDLNet_TCP_Send(client, send, sizeof(send));
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
@@ -228,13 +204,13 @@ int main(int argc, char **argv) {
                 }
 
                 case SDL_KEYUP: {
-                    if(sockets[0]) {
+                    if(client) {
                         switch(evt.key.keysym.sym) {
                             case SDLK_LSHIFT:
                             case SDLK_RSHIFT: {
                                 const char send[] = "7";
 
-                                int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
+                                int len = SDLNet_TCP_Send(client, send, sizeof(send));
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
@@ -253,7 +229,7 @@ int main(int argc, char **argv) {
                                 // Copy the combined string to the allocated memory
                                 std::strcpy(send, combined_string.c_str());
 
-                                int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
+                                int len = SDLNet_TCP_Send(client, send, sizeof(send));
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
@@ -267,12 +243,12 @@ int main(int argc, char **argv) {
 
                 case SDL_MOUSEMOTION: {
 
-                    if(sockets[0]) {
+                    if(client) {
                         string ok = "1" + to_string((float) evt.motion.x / 1920) + "a" + to_string((float) evt.motion.y / 1080);
                         char* send = new char[ok.length() + 1];
                         strcpy(send, ok.c_str());
                         if(evt.motion.x >= 0 && evt.motion.y >= 0 && evt.motion.x <=1920 && evt.motion.y<=1080) {
-                            int len = SDLNet_TCP_Send(sockets[0], send, ok.length()+1);
+                            int len = SDLNet_TCP_Send(client, send, ok.length()+1);
                             if(len == 0) {
                                 cout << SDLNet_GetError();
                             }
@@ -283,7 +259,7 @@ int main(int argc, char **argv) {
 
                 case SDL_MOUSEBUTTONDOWN: {
 
-                    if(sockets[0]) {
+                    if(client) {
                         string opcode;
                         switch(evt.button.button) {
                             case SDL_BUTTON_LEFT: {
@@ -291,7 +267,7 @@ int main(int argc, char **argv) {
                                 char* send = new char[opcode.length() + 1];
                                 strcpy(send, opcode.c_str());
                                 cout << "leftDown" << endl;
-                                int len = SDLNet_TCP_Send(sockets[0], send, 1);
+                                int len = SDLNet_TCP_Send(client, send, 1);
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
@@ -302,7 +278,7 @@ int main(int argc, char **argv) {
                                 char* send = new char[opcode.length() + 1];
                                 strcpy(send, opcode.c_str());
                                 cout << "rightDown" << endl;
-                                int len = SDLNet_TCP_Send(sockets[0], send, 1);
+                                int len = SDLNet_TCP_Send(client, send, 1);
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
@@ -313,7 +289,7 @@ int main(int argc, char **argv) {
                     break;
                 }
                 case SDL_MOUSEBUTTONUP: {
-                    if(sockets[0]) {
+                    if(client) {
                         string opcode;
                         switch(evt.button.button) {
                             case SDL_BUTTON_LEFT: {
@@ -321,7 +297,7 @@ int main(int argc, char **argv) {
                                 char* send = new char[opcode.length() + 1];
                                 strcpy(send, opcode.c_str());
                                 cout << "leftup" << endl;
-                                int len = SDLNet_TCP_Send(sockets[0], send, 1);
+                                int len = SDLNet_TCP_Send(client, send, 1);
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
@@ -332,7 +308,7 @@ int main(int argc, char **argv) {
                                 char* send = new char[opcode.length() + 1];
                                 strcpy(send, opcode.c_str());
                                 cout << "rightup" << endl;
-                                int len = SDLNet_TCP_Send(sockets[0], send, 1);
+                                int len = SDLNet_TCP_Send(client, send, 1);
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
@@ -345,7 +321,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        if(!sockets[0]) {
+        if(!client) {
             SDL_RenderSetLogicalSize(renderer, 0, 0);
             ImGui_ImplSDLRenderer2_NewFrame();
             ImGui_ImplSDL2_NewFrame();
@@ -379,38 +355,25 @@ int main(int argc, char **argv) {
         }
 
         /* read the buffer from client */
-        int ready = SDLNet_CheckSockets(socket_set, 0);
-        if(ready > 0) {
-            if(SDLNet_SocketReady(server)) {
-                /* try to accept a connection */
-                sockets[0] = SDLNet_TCP_Accept(server);
-                SDLNet_TCP_AddSocket(socket_set, sockets[0]);
-                if (!sockets[0]) { /* no connection accepted */
-                    SDL_Delay(100); /*sleep 1/10th of a second */
-                    continue;
-                }
+        if(submit) {
 
-                /* get the clients IP and port number */
-                IPaddress *remoteip;
-                remoteip = SDLNet_TCP_GetPeerAddress(sockets[0]);
-                if (!remoteip) {
-                    printf("SDLNet_TCP_GetPeerAddress: %s\n", SDLNet_GetError());
-                    continue;
-                }
-
-                /* print out the clients IP and port number */
-                Uint32 ipaddr;
-                ipaddr = SDL_SwapBE32(remoteip->host);
-                printf("Accepted a connection from %d.%d.%d.%d port %hu\n", ipaddr >> 24,
-                        (ipaddr >> 16) & 0xff, (ipaddr >> 8) & 0xff, ipaddr & 0xff,
-                        remoteip->port);
-            } else if (sockets[0]){
+            IPaddress ip;
+            long temp = strtol(port, NULL, 10);
+            if (SDLNet_ResolveHost(&ip, ipToTry, (uint16_t) temp) == -1) {
+                cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
+                exit(1);
+            }
+            client = SDLNet_TCP_Open(&ip);
+            if (!client) {
+                cout << "SDLNet_TCP_Open: " << SDLNet_GetError();
+                exit(1);
+            }
+            if (client) {
                 char message[INBUF_SIZE];
-                int len = SDLNet_TCP_Recv(sockets[0], message, INBUF_SIZE);
-                if(len <= 0 && sockets[0]) {
-                    SDLNet_TCP_DelSocket(socket_set, sockets[0]);
-                    SDLNet_TCP_Close(sockets[0]);
-                    sockets[0] = NULL;
+                int len = SDLNet_TCP_Recv(client, message, INBUF_SIZE);
+                if(len <= 0 && client) {
+                    SDLNet_TCP_Close(client);
+                    client = NULL;
                 }
 
                 /* print out the message */
