@@ -1,7 +1,10 @@
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_net.h>
 #include <cstring>
 #include <iostream>
+
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_net.h>
+#include <imgui_impl_sdl2.h>
+#include <imgui_impl_sdlrenderer2.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -136,7 +139,13 @@ int main(int argc, char **argv) {
     rect.y = 0;
     rect.w = 1920;
     rect.h = 1080;
-    SDL_RenderSetLogicalSize(renderer, 1920, 1080);
+
+    // IMGUI setup
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGui_ImplSDL2_InitForSDLRenderer(screen, renderer);
+    ImGui_ImplSDLRenderer2_Init(renderer);
 
     bool done = false;
     SDL_Event evt;
@@ -168,47 +177,112 @@ int main(int argc, char **argv) {
         cout << "Could not add server socket to set";
         exit(1);
     }
+
+    //IMGUI state variables
+    char port[20];
+    char ipToTry[20];
+    bool submit;
+
     while (!done) {
         while (SDL_PollEvent(&evt)) {
+            ImGui_ImplSDL2_ProcessEvent(&evt);
             switch(evt.type) {
                 case SDL_QUIT:
                     done = true;
 
-                case SDL_KEYDOWN:
+                case SDL_KEYDOWN: {
                     if(sockets[0]) {
-                        char c = evt.key.keysym.sym;
+                        switch(evt.key.keysym.sym) {
+                            case SDLK_LSHIFT:
+                            case SDLK_RSHIFT: {
+                                const char send[] = "6";
 
-                        // Combine '0' with the character and return as a char*
-                        std::string combined_string = "0";
-                        combined_string += c;
+                                int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
+                                if(len == 0) {
+                                    cout << SDLNet_GetError();
+                                }
+                                break;
+                            }
+                            default: {
+                                char c = evt.key.keysym.sym;
 
-                        // Allocate memory for the resulting string (including null terminator)
-                        char* send = new char[combined_string.length() + 1];
+                                // Combine '0' with the character and return as a char*
+                                std::string combined_string = "0";
+                                combined_string += c;
 
-                        // Copy the combined string to the allocated memory
-                        std::strcpy(send, combined_string.c_str());
+                                // Allocate memory for the resulting string (including null terminator)
+                                char* send = new char[combined_string.length() + 1];
 
-                        int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
-                        if(len == 0) {
-                            cout << SDLNet_GetError();
+                                // Copy the combined string to the allocated memory
+                                std::strcpy(send, combined_string.c_str());
+
+                                int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
+                                if(len == 0) {
+                                    cout << SDLNet_GetError();
+                                }
+                                break;
+                            }
                         }
                     }
+                    break;
+                }
 
-                case SDL_MOUSEMOTION:
+                case SDL_KEYUP: {
+                    if(sockets[0]) {
+                        switch(evt.key.keysym.sym) {
+                            case SDLK_LSHIFT:
+                            case SDLK_RSHIFT: {
+                                const char send[] = "7";
+
+                                int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
+                                if(len == 0) {
+                                    cout << SDLNet_GetError();
+                                }
+                                break;
+                            }
+                            default: {
+                                char c = evt.key.keysym.sym;
+
+                                // Combine '8' with the character and return as a char*
+                                std::string combined_string = "8";
+                                combined_string += c;
+
+                                // Allocate memory for the resulting string (including null terminator)
+                                char* send = new char[combined_string.length() + 1];
+
+                                // Copy the combined string to the allocated memory
+                                std::strcpy(send, combined_string.c_str());
+
+                                int len = SDLNet_TCP_Send(sockets[0], send, sizeof(send));
+                                if(len == 0) {
+                                    cout << SDLNet_GetError();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+
+
+                case SDL_MOUSEMOTION: {
+
                     if(sockets[0]) {
                         string ok = "1" + to_string((float) evt.motion.x / 1920) + "a" + to_string((float) evt.motion.y / 1080);
                         char* send = new char[ok.length() + 1];
                         strcpy(send, ok.c_str());
                         if(evt.motion.x >= 0 && evt.motion.y >= 0 && evt.motion.x <=1920 && evt.motion.y<=1080) {
-                            cout << send << endl;
                             int len = SDLNet_TCP_Send(sockets[0], send, ok.length()+1);
                             if(len == 0) {
                                 cout << SDLNet_GetError();
                             }
                         }
                     }
+                    break;
+               }
 
-                case SDL_MOUSEBUTTONDOWN: 
+                case SDL_MOUSEBUTTONDOWN: {
+
                     if(sockets[0]) {
                         string opcode;
                         switch(evt.button.button) {
@@ -216,23 +290,29 @@ int main(int argc, char **argv) {
                                 opcode = "2";
                                 char* send = new char[opcode.length() + 1];
                                 strcpy(send, opcode.c_str());
+                                cout << "leftDown" << endl;
                                 int len = SDLNet_TCP_Send(sockets[0], send, 1);
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
+                                break;
                             }
                             case SDL_BUTTON_RIGHT: {
                                 opcode = "3";
                                 char* send = new char[opcode.length() + 1];
                                 strcpy(send, opcode.c_str());
+                                cout << "rightDown" << endl;
                                 int len = SDLNet_TCP_Send(sockets[0], send, 1);
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
+                                break;
                             }
                         }
                     }
-                case SDL_MOUSEBUTTONUP: 
+                    break;
+                }
+                case SDL_MOUSEBUTTONUP: {
                     if(sockets[0]) {
                         string opcode;
                         switch(evt.button.button) {
@@ -240,23 +320,62 @@ int main(int argc, char **argv) {
                                 opcode = "4";
                                 char* send = new char[opcode.length() + 1];
                                 strcpy(send, opcode.c_str());
+                                cout << "leftup" << endl;
                                 int len = SDLNet_TCP_Send(sockets[0], send, 1);
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
+                                break;
                             }
                             case SDL_BUTTON_RIGHT: {
                                 opcode = "5";
                                 char* send = new char[opcode.length() + 1];
                                 strcpy(send, opcode.c_str());
+                                cout << "rightup" << endl;
                                 int len = SDLNet_TCP_Send(sockets[0], send, 1);
                                 if(len == 0) {
                                     cout << SDLNet_GetError();
                                 }
+                                break;
                             }
                         }
                     }
+                    break;
+                }
             }
+        }
+
+        if(!sockets[0]) {
+            SDL_RenderSetLogicalSize(renderer, 0, 0);
+            ImGui_ImplSDLRenderer2_NewFrame();
+            ImGui_ImplSDL2_NewFrame();
+            ImGui::NewFrame();
+
+            ImGui::Begin("test", 0, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBackground);
+
+            ImGui::SetWindowFontScale(1.2);
+            ImGui::SetWindowPos(ImVec2((float)0, (float)0));
+            ImGui::SetWindowSize(ImVec2((float)400 * 2, (float)300));
+
+            ImGui::Text("Remote Desktop App");
+            ImGui::NewLine();
+            ImGui::InputText("IP Address", ipToTry, IM_ARRAYSIZE(ipToTry));
+            ImGui::InputText("Port", port, IM_ARRAYSIZE(port));
+            if (ImGui::Button("Submit")) {
+                submit = true;
+            }
+
+            ImGui::End();
+
+            ImGui::Render();
+
+            ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData());
+            SDL_RenderPresent(renderer);
+
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
+        } else {
+            SDL_RenderSetLogicalSize(renderer, 1920, 1080);
         }
 
         /* read the buffer from client */
@@ -285,9 +404,14 @@ int main(int argc, char **argv) {
                 printf("Accepted a connection from %d.%d.%d.%d port %hu\n", ipaddr >> 24,
                         (ipaddr >> 16) & 0xff, (ipaddr >> 8) & 0xff, ipaddr & 0xff,
                         remoteip->port);
-            } else {
+            } else if (sockets[0]){
                 char message[INBUF_SIZE];
                 int len = SDLNet_TCP_Recv(sockets[0], message, INBUF_SIZE);
+                if(len <= 0 && sockets[0]) {
+                    SDLNet_TCP_DelSocket(socket_set, sockets[0]);
+                    SDLNet_TCP_Close(sockets[0]);
+                    sockets[0] = NULL;
+                }
 
                 /* print out the message */
                 uint8_t *data = (uint8_t*) message;
@@ -311,7 +435,10 @@ int main(int argc, char **argv) {
         }
     }
 
-    SDLNet_TCP_Close(sockets[0]);
+    ImGui_ImplSDLRenderer2_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
+    ImGui::DestroyContext();
+
     clean();
     SDLNet_Quit();
     SDL_Quit();
