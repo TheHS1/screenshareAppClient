@@ -26,7 +26,10 @@ uint8_t *data;
 size_t data_size;
 AVPacket *pkt;
 SDL_Rect rect;
+const int MAX_SOCKETS = 1;
 TCPsocket client = NULL;
+SDLNet_SocketSet socket_set;
+TCPsocket sockets[MAX_SOCKETS];
 
 void clean() {
     SDL_DestroyTexture(texture);
@@ -38,7 +41,7 @@ void clean() {
 }
 
 void display(AVCodecContext* ctx, AVPacket* pkt, AVFrame* frame, SDL_Rect* rect, SDL_Texture* texture, SDL_Renderer* renderer, double fpsrend) {
-    int framenum = ctx->frame_number;
+    int framenum = ctx->frame_num;
     SDL_UpdateYUVTexture(texture, rect,
             frame->data[0], frame->linesize[0],
             frame->data[1], frame->linesize[1],
@@ -158,6 +161,11 @@ int main(int argc, char **argv) {
     char port[20];
     char ipToTry[20];
     bool submit;
+    socket_set = SDLNet_AllocSocketSet(MAX_SOCKETS);
+    if(socket_set == NULL) {
+        cout << "Could not allocate socket set";
+        exit(1);
+    }
 
     while (!done) {
         while (SDL_PollEvent(&evt)) {
@@ -354,9 +362,8 @@ int main(int argc, char **argv) {
             SDL_RenderSetLogicalSize(renderer, 1920, 1080);
         }
 
-        /* read the buffer from client */
         if(submit) {
-
+            submit = false;
             IPaddress ip;
             long temp = strtol(port, NULL, 10);
             if (SDLNet_ResolveHost(&ip, ipToTry, (uint16_t) temp) == -1) {
@@ -368,15 +375,21 @@ int main(int argc, char **argv) {
                 cout << "SDLNet_TCP_Open: " << SDLNet_GetError();
                 exit(1);
             }
-            if (client) {
-                char message[INBUF_SIZE];
-                int len = SDLNet_TCP_Recv(client, message, INBUF_SIZE);
-                if(len <= 0 && client) {
-                    SDLNet_TCP_Close(client);
-                    client = NULL;
-                }
+            SDLNet_TCP_AddSocket(socket_set, client);
+        }
+        /* read the buffer from client */
+        int ready = SDLNet_CheckSockets(socket_set, 0);
+        if (ready > 0) {
+            char message[INBUF_SIZE];
+            int len = SDLNet_TCP_Recv(client, message, INBUF_SIZE);
+            if(len <= 0 && client) {
+                SDLNet_TCP_Close(client);
+                SDLNet_TCP_DelSocket(socket_set, client);
+                client = NULL;
+            }
 
-                /* print out the message */
+            /* print out the message */
+            if (client) {
                 uint8_t *data = (uint8_t*) message;
                 size_t   data_size = len;
                 int ret;
