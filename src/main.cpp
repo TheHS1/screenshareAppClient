@@ -158,8 +158,8 @@ int main(int argc, char **argv) {
     uint32_t windowID = SDL_GetWindowID(screen);
 
     //IMGUI state variables
-    char port[20];
-    char ipToTry[30];
+    char port[20] = ""; 
+    char ipToTry[30] = "";
     int len = 0;
     UDPpacket *packet = SDLNet_AllocPacket(INBUF_SIZE);
     UDPpacket *recv = SDLNet_AllocPacket(INBUF_SIZE);
