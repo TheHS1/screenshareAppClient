@@ -39,7 +39,11 @@ void clean() {
 }
 
 void display(AVCodecContext* ctx, AVPacket* pkt, AVFrame* frame, SDL_Rect* rect, SDL_Texture* texture, SDL_Renderer* renderer, double fpsrend) {
+#if AV_VERSION_MAJOR(AVCODEC_VERSION) < 0
     int framenum = ctx->frame_number;
+#else
+    int framenum = ctx->frame_num;
+#endif
     SDL_UpdateYUVTexture(texture, rect,
             frame->data[0], frame->linesize[0],
             frame->data[1], frame->linesize[1],
