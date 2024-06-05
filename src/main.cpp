@@ -347,6 +347,15 @@ int main(int argc, char **argv) {
         } else {
             /* ImGui::Image((void*)texture, ImVec2(10, 10)); */
             SDL_RenderSetLogicalSize(renderer, 1920, 1080);
+            string opcode = "7";
+            char* send = new char[opcode.length() + 1];
+            strcpy(send, opcode.c_str());
+            packet->len = strlen(send);
+            memcpy(packet->data, send, packet->len);
+            len = SDLNet_UDP_Send(sock, -1, packet);
+            if(len == 0) {
+                cout << SDLNet_GetError();
+            }
         }
 
         if(submit) {
