@@ -370,25 +370,32 @@ int main(int argc, char **argv) {
                     cout << "SDLNet_UDP_Open: " << SDLNet_GetError();
                     exit(1);
                 } else {
-                    haveClient = true;
                     static const char* data = "0";
                     packet->len = strlen(data) + 1;
                     packet->address = ip;
                     memcpy(packet->data, data, packet->len);
                     SDLNet_UDP_Send(sock, -1, packet);
-                    while(SDLNet_UDP_Recv(sock, recv) <= 0) {
+                    int count = 0;
+                    while(SDLNet_UDP_Recv(sock, recv) <= 0 && count < 5) {
                         SDL_Delay(500);
+                        count++;
+                        cout << count << endl;
                     }
-                    recv->data[recv->len] = '\0';
-                    string ipPort = string((char*)recv->data);
+                    if(count < 5) {
+                        haveClient = true;
+                        recv->data[recv->len] = '\0';
+                        string ipPort = string((char*)recv->data);
 
-                    cout << ipPort << endl;
-                    if (SDLNet_ResolveHost(&ip, ipPort.substr(0, ipPort.find(":")).c_str(), (uint16_t) stoi(ipPort.substr(ipPort.find(":") + 1))) == -1) {
-                        cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
-                    } else {
-                        cout << "setting peer address and port" << endl;
-                        packet->address = ip;
-                    }
+                        cout << ipPort << endl;
+                        if (SDLNet_ResolveHost(&ip, ipPort.substr(0, ipPort.find(":")).c_str(), (uint16_t) stoi(ipPort.substr(ipPort.find(":") + 1))) == -1) {
+                            /* if (SDLNet_ResolveHost(&ip, "172.30.176.1", (uint16_t) stoi(ipPort.substr(ipPort.find(":") + 1))) == -1) { */
+                            cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
+                        } else {
+                            cout << "setting peer address and port" << endl;
+                            packet->address = ip;
+                        }
+
+                        }
                 }
             }
         }
