@@ -171,58 +171,54 @@ int main(int argc, char **argv) {
             switch(evt.type) {
                 case SDL_QUIT:
                     done = true;
+                    break;
 
                 case SDL_KEYDOWN: {
                     if(haveClient) {
-			int c = evt.key.keysym.sym;
+                        int c = evt.key.keysym.sym;
 
-			// Combine '0' with the character and return as a char*
-			std::string combined_string = "0";
-			combined_string += c;
+                        // Combine '0' with the character and return as a char*
+                        std::string combined_string = "0" + to_string(c);
 
-			// Allocate memory for the resulting string (including null terminator)
-			char* send = new char[combined_string.length() + 1];
+                        // Allocate memory for the resulting string (including null terminator)
+                        char* send = new char[combined_string.length() + 1];
 
-			// Copy the combined string to the allocated memory
-			std::strcpy(send, combined_string.c_str());
+                        // Copy the combined string to the allocated memory
+                        std::strcpy(send, combined_string.c_str());
+                        cout << send << endl;
 
-			packet->len = strlen(send);
-			memcpy(packet->data, send, packet->len);
-			len = SDLNet_UDP_Send(sock, -1, packet);
-			if(len == 0) {
-			        cout << SDLNet_GetError();
-			}
-			break;
+                        packet->len = strlen(send);
+                        memcpy(packet->data, send, packet->len);
+                        len = SDLNet_UDP_Send(sock, -1, packet);
+                        if(len == 0) {
+                                cout << SDLNet_GetError();
+                        }
                     }
                     break;
                 }
 
                 case SDL_KEYUP: {
                     if(haveClient) {
-			int c = evt.key.keysym.sym;
+                        int c = evt.key.keysym.sym;
 
-			// Combine '8' with the character and return as a char*
-			std::string combined_string = "6";
-			combined_string += c;
+                        // Combine '6' with the character and return as a char*
+                        std::string combined_string = "6" + to_string(c);
 
-			// Allocate memory for the resulting string (including null terminator)
-			char* send = new char[combined_string.length() + 1];
+                        // Allocate memory for the resulting string (including null terminator)
+                        char* send = new char[combined_string.length() + 1];
 
-			// Copy the combined string to the allocated memory
-			std::strcpy(send, combined_string.c_str());
+                        // Copy the combined string to the allocated memory
+                        std::strcpy(send, combined_string.c_str());
 
-			packet->len = strlen(send);
-			memcpy(packet->data, send, packet->len);
-			len = SDLNet_UDP_Send(sock, -1, packet);
-			if(len == 0) {
-			        cout << SDLNet_GetError();
-			}
-			break;
+                        packet->len = strlen(send);
+                        memcpy(packet->data, send, packet->len);
+                        len = SDLNet_UDP_Send(sock, -1, packet);
+                        if(len == 0) {
+                            cout << SDLNet_GetError();
+                        }
                     }
                     break;
                 }
-
-
                 case SDL_MOUSEMOTION: {
 
                     if(haveClient) {
