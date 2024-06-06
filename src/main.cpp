@@ -182,6 +182,7 @@ int main(int argc, char **argv) {
     //IMGUI state variables
     char port[20] = ""; 
     char ipToTry[30] = "";
+    uint8_t* buf = new uint8_t[300000];
     int len = 0;
     packet = SDLNet_AllocPacket(INBUF_SIZE);
     UDPpacket *recv = SDLNet_AllocPacket(INBUF_SIZE);
@@ -437,21 +438,29 @@ int main(int argc, char **argv) {
                 /* cout << recv->len << endl; */
                 /* cout << recv->data << endl; */
                 /* print out the message */
-                uint8_t *data = recv->data;
-                size_t   data_size = recv->len;
+                uint8_t *data = &recv->data[3];
+                size_t   data_size = recv->len - 3;
                 int ret;
-                while(data_size > 0) {
-                    ret = av_parser_parse2(parser, c, &pkt->data, &pkt->size,
-                            data, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
-                    if (ret < 0) {
-                        fprintf(stderr, "Error while parsing\n");
-                        exit(1);
-                    }
-                    data      += ret;
-                    data_size -= ret;
+                memcpy(&buf[(int)(((recv->data[1]) * 255 + (recv->data[2])) * 1400)], data, data_size);
+                if(recv->data[0] == '1') {
+                    data_size += (recv->data[1]*255 + recv->data[2]) * 1400;
+                    Uint8* bufPtr = buf;
+                    while(data_size > 0) {
+                        ret = av_parser_parse2(parser, c, &pkt->data, &pkt->size,
+                                bufPtr, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+                        if (ret < 0) {
+                            fprintf(stderr, "Error while parsing\n");
+                            exit(1);
+                        }
+                        bufPtr      += ret;
+                        data_size -= ret;
 
-                    if (pkt->size)
-                        decode(c, frame, pkt);
+                        if (pkt->size) {
+                            decode(c, frame, pkt);
+                            /* cout << "Decoding packet" << endl; */
+                        }
+                    }
+                    //printf("Received (%i): \n", len);
                 }
             } else {
                 SDLNet_UDP_Close(sock);
