@@ -1,5 +1,6 @@
 #include <cstring>
 #include <iostream>
+#include <thread>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_net.h>
@@ -78,7 +79,25 @@ static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt)
     }
 }
 
+void keepAlive() { 
+    while(1) {
+        SDL_Delay(200);
+        if(haveClient) {
+            string opcode = "7";
+            char* send = new char[opcode.length() + 1];
+            strcpy(send, opcode.c_str());
+            packet->len = strlen(send);
+            memcpy(packet->data, send, packet->len);
+            int len = SDLNet_UDP_Send(sock, -1, packet);
+            if(len == 0) {
+                cout << SDLNet_GetError();
+            }
+        }
+    }
+}
+
 int main(int argc, char **argv) {
+    thread t(keepAlive);
     // ffmpeg setup
 
     pkt = av_packet_alloc();
