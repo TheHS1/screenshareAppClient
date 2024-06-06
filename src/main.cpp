@@ -28,6 +28,9 @@ size_t data_size;
 AVPacket *pkt;
 SDL_Rect rect;
 UDPsocket sock = NULL;
+UDPpacket *packet;
+SDLNet_SocketSet socket_set;
+bool haveClient = false, firstReceive = true;
 
 void clean() {
     SDL_DestroyTexture(texture);
@@ -39,7 +42,7 @@ void clean() {
 }
 
 void display(AVCodecContext* ctx, AVPacket* pkt, AVFrame* frame, SDL_Rect* rect, SDL_Texture* texture, SDL_Renderer* renderer, double fpsrend) {
-#if AV_VERSION_MAJOR(AVCODEC_VERSION) < 0
+#if AV_VERSION_MAJOR(AVCODEC_VERSION) < 60
     int framenum = ctx->frame_number;
 #else
     int framenum = ctx->frame_num;
@@ -161,9 +164,14 @@ int main(int argc, char **argv) {
     char port[20] = ""; 
     char ipToTry[30] = "";
     int len = 0;
-    UDPpacket *packet = SDLNet_AllocPacket(INBUF_SIZE);
+    packet = SDLNet_AllocPacket(INBUF_SIZE);
     UDPpacket *recv = SDLNet_AllocPacket(INBUF_SIZE);
-    bool submit = false, haveClient = false;
+    socket_set = SDLNet_AllocSocketSet(1);
+    if(socket_set == NULL) {
+        cout << "Could not allocate socket set";
+        exit(1);
+    }
+    bool submit = false;
 
     while (!done) {
         while (SDL_PollEvent(&evt)) {
@@ -328,6 +336,9 @@ int main(int argc, char **argv) {
                 submit = true;
                 /* ImGui::OpenPopup("Disconnect"); */
             }
+            if(submit) {
+                ImGui::Text("Connecting...");
+            }
 
             /* if (ImGui::BeginPopupModal("Disconnect", NULL, ImGuiWindowFlags_AlwaysAutoResize)) */
             /* { */
@@ -347,22 +358,13 @@ int main(int argc, char **argv) {
         } else {
             /* ImGui::Image((void*)texture, ImVec2(10, 10)); */
             SDL_RenderSetLogicalSize(renderer, 1920, 1080);
-            string opcode = "7";
-            char* send = new char[opcode.length() + 1];
-            strcpy(send, opcode.c_str());
-            packet->len = strlen(send);
-            memcpy(packet->data, send, packet->len);
-            len = SDLNet_UDP_Send(sock, -1, packet);
-            if(len == 0) {
-                cout << SDLNet_GetError();
-            }
         }
 
         if(submit) {
             submit = false;
             IPaddress ip;
             long temp = strtol(port, NULL, 10);
-            if (SDLNet_ResolveHost(&ip, "127.0.0.1", (uint16_t) PORT) == -1) {
+            if (SDLNet_ResolveHost(&ip, "167.234.216.217", (uint16_t) PORT) == -1) {
                 cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
             } else {
                 sock = SDLNet_UDP_Open(0);
@@ -394,17 +396,27 @@ int main(int argc, char **argv) {
                             cout << "setting peer address and port" << endl;
                             packet->address = ip;
                         }
+                        SDLNet_UDP_AddSocket(socket_set, sock);
 
-                        }
+                    }
                 }
             }
         }
         /* read the buffer from sock */
-        if(sock) {
-            int haveData = SDLNet_UDP_Recv(sock, recv);
-            if(haveData) {
-                //cout << recv->len << endl;
-                //cout << recv->data << endl;
+        if(haveClient) {
+            int ready;
+            if(firstReceive) {
+                ready = SDLNet_CheckSockets(socket_set, 30000);
+                if(ready > 0) {
+                    firstReceive = false;
+                }
+            } else {
+                ready = SDLNet_CheckSockets(socket_set, 1000);
+            }
+            if(ready > 0) {
+                SDLNet_UDP_Recv(sock, recv);
+                /* cout << recv->len << endl; */
+                /* cout << recv->data << endl; */
                 /* print out the message */
                 uint8_t *data = recv->data;
                 size_t   data_size = recv->len;
@@ -422,7 +434,12 @@ int main(int argc, char **argv) {
                     if (pkt->size)
                         decode(c, frame, pkt);
                 }
-                //printf("Received (%i): \n", len);
+            } else {
+                SDLNet_UDP_Close(sock);
+                SDLNet_UDP_DelSocket(socket_set, sock);
+                sock = NULL;
+                haveClient = false;
+                firstReceive = true;
             }
         }
     }
