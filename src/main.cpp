@@ -446,7 +446,7 @@ int main(int argc, char **argv) {
                     firstReceive = false;
                 }
             } else {
-                ready = SDLNet_CheckSockets(socket_set, 1000);
+                ready = SDLNet_CheckSockets(socket_set, 5000);
             }
             if(ready > 0) {
                 SDLNet_UDP_Recv(sock, recv);
