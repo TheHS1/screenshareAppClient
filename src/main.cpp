@@ -1,6 +1,7 @@
 #include <cstring>
 #include <iostream>
 #include <thread>
+#include <sstream>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_net.h>
@@ -16,6 +17,8 @@ using namespace std;
 
 #define INBUF_SIZE 50000
 #define PORT 3478
+#define maxPacketCount 3072
+#define maxByteVal 256
 
 SDL_Window *screen;
 SDL_Renderer *renderer;
@@ -179,14 +182,25 @@ int main(int argc, char **argv) {
     SDL_Event evt;
     uint32_t windowID = SDL_GetWindowID(screen);
 
-    //IMGUI state variables
-    char port[20] = ""; 
-    char ipToTry[30] = "";
-    uint8_t* buf = new uint8_t[300000];
+    // sockets
     int len = 0;
     packet = SDLNet_AllocPacket(INBUF_SIZE);
     UDPpacket *recv = SDLNet_AllocPacket(INBUF_SIZE);
     socket_set = SDLNet_AllocSocketSet(1);
+
+    // retransmission
+    uint8_t* buf = new uint8_t[5000000];
+    int visited[maxPacketCount];
+    bool retransmit[maxPacketCount];
+    int prevIndex = -1, index = -1;
+    int packetPos = 0; // for tracking position in packet queue
+
+    //IMGUI state variables
+    char port[20] = ""; 
+    char ipToTry[30] = "";
+
+    memset(visited, -1, sizeof(visited));
+    memset(retransmit, false, sizeof(retransmit));
     if(socket_set == NULL) {
         cout << "Could not allocate socket set";
         exit(1);
@@ -385,6 +399,7 @@ int main(int argc, char **argv) {
             IPaddress ip;
             long temp = strtol(port, NULL, 10);
             if (SDLNet_ResolveHost(&ip, "167.234.216.217", (uint16_t) PORT) == -1) {
+            /* if (SDLNet_ResolveHost(&ip, "127.0.0.1", (uint16_t) PORT) == -1) { */
                 cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
             } else {
                 sock = SDLNet_UDP_Open(0);
@@ -435,32 +450,66 @@ int main(int argc, char **argv) {
             }
             if(ready > 0) {
                 SDLNet_UDP_Recv(sock, recv);
-                /* cout << recv->len << endl; */
+                /* cout << "length: " << recv->len << endl; */
                 /* cout << recv->data << endl; */
-                /* print out the message */
-                uint8_t *data = &recv->data[3];
-                size_t   data_size = recv->len - 3;
-                int ret;
-                memcpy(&buf[(int)(((recv->data[1]) * 255 + (recv->data[2])) * 1400)], data, data_size);
-                if(recv->data[0] == '1') {
-                    data_size += (recv->data[1]*255 + recv->data[2]) * 1400;
-                    Uint8* bufPtr = buf;
-                    while(data_size > 0) {
-                        ret = av_parser_parse2(parser, c, &pkt->data, &pkt->size,
-                                bufPtr, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
-                        if (ret < 0) {
-                            fprintf(stderr, "Error while parsing\n");
-                            exit(1);
-                        }
-                        bufPtr      += ret;
-                        data_size -= ret;
+                if(strcmp((char*) recv->data, "alive") == 0 && recv->len == 6) {
+                } else {
+                    uint8_t *data = &recv->data[3];
+                    size_t   data_size = recv->len - 3;
+                    int ret;
 
-                        if (pkt->size) {
-                            decode(c, frame, pkt);
-                            /* cout << "Decoding packet" << endl; */
+                    index = (int) ((recv->data[1]) * maxByteVal + (recv->data[2]));
+                    memcpy(&buf[index * 1400], data, data_size);
+                    visited[index] = data_size;
+
+                    if(((prevIndex + 1) % maxPacketCount) != index && recv->data[0] == 0) {
+                        for(int i = prevIndex; i != index; i = (i + 1) % maxPacketCount) {
+                            retransmit[i] = true;
+                        }
+                        cout << "Packets Dropped: " << (index - prevIndex) << endl << "Index: " << index << "\nPrev: " << prevIndex << endl << endl;
+                        stringstream send;
+                        send << '8' << (char)(((prevIndex + 1) % maxPacketCount) / maxByteVal) << (char)(((prevIndex + 1) % maxPacketCount) % maxByteVal) << (char)(recv->data[1]) << (char)(recv->data[2]) << '\0';
+                        packet->len = send.str().length();
+                        memcpy(packet->data, send.str().c_str(), packet->len);
+                        len = SDLNet_UDP_Send(sock, -1, packet);
+                        if(len == 0) {
+                            cout << SDLNet_GetError();
                         }
                     }
-                    //printf("Received (%i): \n", len);
+                    if(recv->data[0] == 1) {
+                        retransmit[index] = false;
+                        stringstream send;
+                        send << '9' << (char)(recv->data[1]) << (char)(recv->data[2]) << '\0';
+                        packet->len = send.str().length();
+                        memcpy(packet->data, send.str().c_str(), packet->len);
+                        len = SDLNet_UDP_Send(sock, -1, packet);
+                    } else {
+                        prevIndex = index;
+                    }
+                    while(visited[packetPos] != -1) {
+                        data_size = visited[packetPos];
+                        Uint8* bufPtr = &buf[packetPos * 1400];
+                        while(data_size > 0) {
+                            ret = av_parser_parse2(parser, c, &pkt->data, &pkt->size,
+                                    bufPtr, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+                            if (ret < 0) {
+                                fprintf(stderr, "Error while parsing\n");
+                                exit(1);
+                            }
+                            bufPtr      += ret;
+                            data_size -= ret;
+
+                            if (pkt->size) {
+                                decode(c, frame, pkt);
+                            }
+                        }
+                        visited[packetPos] = -1;
+                        packetPos++;
+                        if(packetPos >= 256 * 12) {
+                            packetPos = 0;
+                        }
+                        //printf("Received (%i): \n", len);
+                    }
                 }
             } else {
                 SDLNet_UDP_Close(sock);
@@ -468,6 +517,11 @@ int main(int argc, char **argv) {
                 sock = NULL;
                 haveClient = false;
                 firstReceive = true;
+                packetPos = 0;
+                memset(visited, -1, sizeof(visited));
+                memset(retransmit, false, sizeof(retransmit));
+                prevIndex = -1;
+                index = 0;
             }
         }
     }
