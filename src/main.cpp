@@ -99,6 +99,15 @@ void keepAlive() {
     }
 }
 
+void sendPacket(string toSend) {
+    packet->len = toSend.size() + 1;
+    memcpy(packet->data, toSend.c_str(), packet->len);
+    int len = SDLNet_UDP_Send(sock, -1, packet);
+    if(len == 0) {
+        cout << SDLNet_GetError();
+    }
+}
+
 int main(int argc, char **argv) {
     thread t(keepAlive);
     // ffmpeg setup
@@ -217,63 +226,27 @@ int main(int argc, char **argv) {
 
                 case SDL_KEYDOWN: {
                     if(haveClient) {
+                        // '0' used for keydown events
                         int c = evt.key.keysym.sym;
-
-                        // Combine '0' with the character and return as a char*
-                        std::string combined_string = "0" + to_string(c);
-
-                        // Allocate memory for the resulting string (including null terminator)
-                        char* send = new char[combined_string.length() + 1];
-
-                        // Copy the combined string to the allocated memory
-                        std::strcpy(send, combined_string.c_str());
-                        cout << send << endl;
-
-                        packet->len = strlen(send);
-                        memcpy(packet->data, send, packet->len);
-                        len = SDLNet_UDP_Send(sock, -1, packet);
-                        if(len == 0) {
-                                cout << SDLNet_GetError();
-                        }
+                        sendPacket("0" + to_string(c));
                     }
                     break;
                 }
 
                 case SDL_KEYUP: {
                     if(haveClient) {
+                        // '6' used for keyup events
                         int c = evt.key.keysym.sym;
-
-                        // Combine '6' with the character and return as a char*
-                        std::string combined_string = "6" + to_string(c);
-
-                        // Allocate memory for the resulting string (including null terminator)
-                        char* send = new char[combined_string.length() + 1];
-
-                        // Copy the combined string to the allocated memory
-                        std::strcpy(send, combined_string.c_str());
-
-                        packet->len = strlen(send);
-                        memcpy(packet->data, send, packet->len);
-                        len = SDLNet_UDP_Send(sock, -1, packet);
-                        if(len == 0) {
-                            cout << SDLNet_GetError();
-                        }
+                        sendPacket("6" + to_string(c));
                     }
                     break;
                 }
                 case SDL_MOUSEMOTION: {
 
                     if(haveClient) {
-                        string ok = "1" + to_string((float) evt.motion.x / 1920) + "a" + to_string((float) evt.motion.y / 1080);
-                        char* send = new char[ok.length() + 1];
-                        strcpy(send, ok.c_str());
                         if(evt.motion.x >= 0 && evt.motion.y >= 0 && evt.motion.x <=1920 && evt.motion.y<=1080) {
-                            packet->len = strlen(send);
-                            memcpy(packet->data, send, packet->len);
-                            len = SDLNet_UDP_Send(sock, -1, packet);
-                            if(len == 0) {
-                                cout << SDLNet_GetError();
-                            }
+                            string motion = "1" + to_string((float) evt.motion.x / 1920) + "a" + to_string((float) evt.motion.y / 1080);
+                            sendPacket(motion);
                         }
                     }
                     break;
@@ -285,29 +258,13 @@ int main(int argc, char **argv) {
                         string opcode;
                         switch(evt.button.button) {
                             case SDL_BUTTON_LEFT: {
-                                opcode = "2";
-                                char* send = new char[opcode.length() + 1];
-                                strcpy(send, opcode.c_str());
+                                sendPacket("2");
                                 cout << "leftDown" << endl;
-                                packet->len = strlen(send);
-                                memcpy(packet->data, send, packet->len);
-                                len = SDLNet_UDP_Send(sock, -1, packet);
-                                if(len == 0) {
-                                    cout << SDLNet_GetError();
-                                }
                                 break;
                             }
                             case SDL_BUTTON_RIGHT: {
-                                opcode = "3";
-                                char* send = new char[opcode.length() + 1];
-                                strcpy(send, opcode.c_str());
+                                sendPacket("3");
                                 cout << "rightDown" << endl;
-                                packet->len = strlen(send);
-                                memcpy(packet->data, send, packet->len);
-                                len = SDLNet_UDP_Send(sock, -1, packet);
-                                if(len == 0) {
-                                    cout << SDLNet_GetError();
-                                }
                                 break;
                             }
                         }
@@ -319,29 +276,13 @@ int main(int argc, char **argv) {
                         string opcode;
                         switch(evt.button.button) {
                             case SDL_BUTTON_LEFT: {
-                                opcode = "4";
-                                char* send = new char[opcode.length() + 1];
-                                strcpy(send, opcode.c_str());
+                                sendPacket("4");
                                 cout << "leftup" << endl;
-                                packet->len = strlen(send);
-                                memcpy(packet->data, send, packet->len);
-                                len = SDLNet_UDP_Send(sock, -1, packet);
-                                if(len == 0) {
-                                    cout << SDLNet_GetError();
-                                }
                                 break;
                             }
                             case SDL_BUTTON_RIGHT: {
-                                opcode = "5";
-                                char* send = new char[opcode.length() + 1];
-                                strcpy(send, opcode.c_str());
+                                sendPacket("5");
                                 cout << "rightup" << endl;
-                                packet->len = strlen(send);
-                                memcpy(packet->data, send, packet->len);
-                                len = SDLNet_UDP_Send(sock, -1, packet);
-                                if(len == 0) {
-                                    cout << SDLNet_GetError();
-                                }
                                 break;
                             }
                         }
@@ -398,8 +339,8 @@ int main(int argc, char **argv) {
             submit = false;
             IPaddress ip;
             long temp = strtol(port, NULL, 10);
-            if (SDLNet_ResolveHost(&ip, "167.234.216.217", (uint16_t) PORT) == -1) {
-            /* if (SDLNet_ResolveHost(&ip, "127.0.0.1", (uint16_t) PORT) == -1) { */
+            //if (SDLNet_ResolveHost(&ip, "167.234.216.217", (uint16_t) PORT) == -1) {
+            if (SDLNet_ResolveHost(&ip, "127.0.0.1", (uint16_t) PORT) == -1) { 
                 cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
             } else {
                 sock = SDLNet_UDP_Open(0);
@@ -469,20 +410,14 @@ int main(int argc, char **argv) {
                         cout << "Packets Dropped: " << (index - prevIndex) << endl << "Index: " << index << "\nPrev: " << prevIndex << endl << endl;
                         stringstream send;
                         send << '8' << (char)(((prevIndex + 1) % maxPacketCount) / maxByteVal) << (char)(((prevIndex + 1) % maxPacketCount) % maxByteVal) << (char)(recv->data[1]) << (char)(recv->data[2]) << '\0';
-                        packet->len = send.str().length();
-                        memcpy(packet->data, send.str().c_str(), packet->len);
-                        len = SDLNet_UDP_Send(sock, -1, packet);
-                        if(len == 0) {
-                            cout << SDLNet_GetError();
-                        }
+                        sendPacket(send.str());
                     }
                     if(recv->data[0] == 1) {
                         retransmit[index] = false;
                         stringstream send;
                         send << '9' << (char)(recv->data[1]) << (char)(recv->data[2]) << '\0';
-                        packet->len = send.str().length();
-                        memcpy(packet->data, send.str().c_str(), packet->len);
-                        len = SDLNet_UDP_Send(sock, -1, packet);
+                        cout << recv->data[1] * 256 + recv->data[2] << endl;
+                        sendPacket(send.str());
                     } else {
                         prevIndex = index;
                     }
