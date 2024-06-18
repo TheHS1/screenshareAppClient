@@ -17,12 +17,15 @@ using namespace std;
 
 #define INBUF_SIZE 50000
 #define PORT 3478
-#define maxPacketCount 3072
+constexpr auto maxPacketCount = 256 * 60;
 #define maxByteVal 256
 
+// SDL
 SDL_Window *screen;
 SDL_Renderer *renderer;
 SDL_Texture *texture;
+
+// FFMPEG
 const AVCodec *codec;
 AVCodecParserContext *parser;
 AVCodecContext *c = NULL;
@@ -31,10 +34,19 @@ uint8_t *data;
 size_t data_size;
 AVPacket *pkt;
 SDL_Rect rect;
+
+// sockets
 UDPsocket sock = NULL;
 UDPpacket *packet;
 SDLNet_SocketSet socket_set;
 bool haveClient = false, firstReceive = true;
+
+//retransmission
+char backupBuf[maxPacketCount * 30];
+int backupLens[maxPacketCount];
+int transmitRequest[maxPacketCount];
+int hpCount = 0;
+int lpCount = 0;
 
 void clean() {
     SDL_DestroyTexture(texture);
@@ -86,11 +98,10 @@ void keepAlive() {
     while(1) {
         SDL_Delay(200);
         if(haveClient) {
-            string opcode = "7";
-            char* send = new char[opcode.length() + 1];
-            strcpy(send, opcode.c_str());
-            packet->len = strlen(send);
-            memcpy(packet->data, send, packet->len);
+            string opcode = "";
+            opcode += (char)0;
+            packet->len = opcode.length() + 1;
+            memcpy(packet->data, opcode.c_str(), packet->len);
             int len = SDLNet_UDP_Send(sock, -1, packet);
             if(len == 0) {
                 cout << SDLNet_GetError();
@@ -99,9 +110,30 @@ void keepAlive() {
     }
 }
 
-void sendPacket(string toSend) {
-    packet->len = toSend.size() + 1;
-    memcpy(packet->data, toSend.c_str(), packet->len);
+void sendPacket(string toSend, bool retransmit) {
+    stringstream send;
+    if(!retransmit) {
+        send << (char)1 << (char)hpCount << (char)lpCount << toSend;
+        packet->len = send.str().length() + 1;
+        memcpy(packet->data, send.str().c_str(), packet->len);
+        memcpy(&backupBuf[(hpCount * maxByteVal + lpCount) * 30], toSend.c_str(), packet->len - 3);
+        backupLens[hpCount * maxByteVal + lpCount] = packet->len;
+
+        lpCount++;
+        if(lpCount > 255) {
+            lpCount = 0;
+            hpCount++;
+            if(hpCount > 59) {
+                hpCount = 0;
+            }
+        }
+
+    } else {
+        send << (char)2 << toSend;
+        packet->len = send.str().length() + 1;
+        memcpy(packet->data, send.str().c_str(), packet->len);
+
+    }
     int len = SDLNet_UDP_Send(sock, -1, packet);
     if(len == 0) {
         cout << SDLNet_GetError();
@@ -198,9 +230,8 @@ int main(int argc, char **argv) {
     socket_set = SDLNet_AllocSocketSet(1);
 
     // retransmission
-    uint8_t* buf = new uint8_t[5000000];
+    uint8_t* buf = new uint8_t[maxPacketCount * 1500];
     int visited[maxPacketCount];
-    bool retransmit[maxPacketCount];
     int prevIndex = -1, index = -1;
     int packetPos = 0; // for tracking position in packet queue
 
@@ -209,7 +240,7 @@ int main(int argc, char **argv) {
     char ipToTry[30] = "";
 
     memset(visited, -1, sizeof(visited));
-    memset(retransmit, false, sizeof(retransmit));
+    memset(transmitRequest, -1, sizeof(transmitRequest));
     if(socket_set == NULL) {
         cout << "Could not allocate socket set";
         exit(1);
@@ -228,7 +259,7 @@ int main(int argc, char **argv) {
                     if(haveClient) {
                         // '0' used for keydown events
                         int c = evt.key.keysym.sym;
-                        sendPacket("0" + to_string(c));
+                        sendPacket("0" + to_string(c), false);
                     }
                     break;
                 }
@@ -237,7 +268,7 @@ int main(int argc, char **argv) {
                     if(haveClient) {
                         // '6' used for keyup events
                         int c = evt.key.keysym.sym;
-                        sendPacket("6" + to_string(c));
+                        sendPacket("6" + to_string(c), false);
                     }
                     break;
                 }
@@ -246,7 +277,7 @@ int main(int argc, char **argv) {
                     if(haveClient) {
                         if(evt.motion.x >= 0 && evt.motion.y >= 0 && evt.motion.x <=1920 && evt.motion.y<=1080) {
                             string motion = "1" + to_string((float) evt.motion.x / 1920) + "a" + to_string((float) evt.motion.y / 1080);
-                            sendPacket(motion);
+                            /* sendPacket(motion, false); */
                         }
                     }
                     break;
@@ -258,12 +289,12 @@ int main(int argc, char **argv) {
                         string opcode;
                         switch(evt.button.button) {
                             case SDL_BUTTON_LEFT: {
-                                sendPacket("2");
+                                sendPacket("2", false);
                                 cout << "leftDown" << endl;
                                 break;
                             }
                             case SDL_BUTTON_RIGHT: {
-                                sendPacket("3");
+                                sendPacket("3", false);
                                 cout << "rightDown" << endl;
                                 break;
                             }
@@ -276,12 +307,12 @@ int main(int argc, char **argv) {
                         string opcode;
                         switch(evt.button.button) {
                             case SDL_BUTTON_LEFT: {
-                                sendPacket("4");
+                                sendPacket("4", false);
                                 cout << "leftup" << endl;
                                 break;
                             }
                             case SDL_BUTTON_RIGHT: {
-                                sendPacket("5");
+                                sendPacket("5", false);
                                 cout << "rightup" << endl;
                                 break;
                             }
@@ -339,8 +370,8 @@ int main(int argc, char **argv) {
             submit = false;
             IPaddress ip;
             long temp = strtol(port, NULL, 10);
-            //if (SDLNet_ResolveHost(&ip, "167.234.216.217", (uint16_t) PORT) == -1) {
-            if (SDLNet_ResolveHost(&ip, "127.0.0.1", (uint16_t) PORT) == -1) { 
+            if (SDLNet_ResolveHost(&ip, "167.234.216.217", (uint16_t) PORT) == -1) {
+            /* if (SDLNet_ResolveHost(&ip, "127.0.0.1", (uint16_t) PORT) == -1) { */ 
                 cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
             } else {
                 sock = SDLNet_UDP_Open(0);
@@ -357,7 +388,6 @@ int main(int argc, char **argv) {
                     while(SDLNet_UDP_Recv(sock, recv) <= 0 && count < 5) {
                         SDL_Delay(500);
                         count++;
-                        cout << count << endl;
                     }
                     if(count < 5) {
                         haveClient = true;
@@ -366,11 +396,10 @@ int main(int argc, char **argv) {
 
                         cout << ipPort << endl;
                         if (SDLNet_ResolveHost(&ip, ipPort.substr(0, ipPort.find(":")).c_str(), (uint16_t) stoi(ipPort.substr(ipPort.find(":") + 1))) == -1) {
-                            /* if (SDLNet_ResolveHost(&ip, "172.30.176.1", (uint16_t) stoi(ipPort.substr(ipPort.find(":") + 1))) == -1) { */
                             cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
                         } else {
                             cout << "setting peer address and port" << endl;
-                            packet->address = ip;
+                            /* packet->address = ip; */
                         }
                         SDLNet_UDP_AddSocket(socket_set, sock);
 
@@ -390,10 +419,54 @@ int main(int argc, char **argv) {
                 ready = SDLNet_CheckSockets(socket_set, 5000);
             }
             if(ready > 0) {
+                for (int i = 0; i < maxPacketCount; i++) {
+                    if (transmitRequest[i] == 0) {
+                        stringstream send;
+                        send << (char)(i / maxByteVal) << (char)(i % maxByteVal);
+                        for(int j = 0; j < backupLens[i]; j++) {
+                            send << (char)(backupBuf[i*30 + j]);
+                        }
+                        sendPacket(send.str(), true);
+                        transmitRequest[i] = 60;
+                    }
+                    else if (transmitRequest[i] != -1) {
+                        transmitRequest[i]--;
+                    }
+                }
                 SDLNet_UDP_Recv(sock, recv);
                 /* cout << "length: " << recv->len << endl; */
                 /* cout << recv->data << endl; */
-                if(strcmp((char*) recv->data, "alive") == 0 && recv->len == 6) {
+                if((uint8_t) recv->data[0] == 2) {
+
+                } else if((uint8_t) recv->data[0] == 3) {
+                    int sHigh, sLow, eHigh, eLow;
+                    sHigh = (uint8_t)recv->data[1];
+                    sLow = (uint8_t)recv->data[2];
+                    eHigh = (uint8_t)recv->data[3];
+                    eLow = (uint8_t)recv->data[4];
+                    if (sHigh < 60 && eHigh < 60) {
+                        int beginning = sHigh * maxByteVal + sLow;
+                        int end = eHigh * maxByteVal + eLow;
+                        cout << "Retransmit " << beginning << " " << end << endl;
+                        for (int i = beginning; i != end; i = (i + 1) % maxPacketCount) {
+                            transmitRequest[i] = 0;
+                        }
+                    }
+
+                } else if ((uint8_t) recv->data[0] == 4) {
+                    int index = (recv->data[1]) * maxByteVal + recv->data[2];
+                    cout << "ack received" << index << endl;
+                    transmitRequest[index] = -1;
+                } else if ((uint8_t) recv->data[0] == 5) {
+                    for(int i = 1; i < recv->len; i+=2) {
+                        if (i+1 < recv->len) {
+                            index = (int) ((recv->data[i]) * maxByteVal + (recv->data[i+1]));
+                            cout << "Retransmit " << index << endl;
+                            if(index < maxPacketCount) {
+                                transmitRequest[index] = 0;
+                            }
+                        }
+                    }
                 } else {
                     uint8_t *data = &recv->data[3];
                     size_t   data_size = recv->len - 3;
@@ -404,20 +477,16 @@ int main(int argc, char **argv) {
                     visited[index] = data_size;
 
                     if(((prevIndex + 1) % maxPacketCount) != index && recv->data[0] == 0) {
-                        for(int i = prevIndex; i != index; i = (i + 1) % maxPacketCount) {
-                            retransmit[i] = true;
-                        }
-                        cout << "Packets Dropped: " << (index - prevIndex) << endl << "Index: " << index << "\nPrev: " << prevIndex << endl << endl;
+                        cout << "Packets Dropped: " << min(abs(index - prevIndex), maxPacketCount - abs(index - prevIndex)) << endl << "Index: " << index << "\nPrev: " << prevIndex << endl << endl;
                         stringstream send;
-                        send << '8' << (char)(((prevIndex + 1) % maxPacketCount) / maxByteVal) << (char)(((prevIndex + 1) % maxPacketCount) % maxByteVal) << (char)(recv->data[1]) << (char)(recv->data[2]) << '\0';
-                        sendPacket(send.str());
+                        send << '8' << (char)(((prevIndex + 1) % maxPacketCount) / maxByteVal) << (char)(((prevIndex + 1) % maxPacketCount) % maxByteVal) << (char)(recv->data[1]) << (char)(recv->data[2]);
+                        sendPacket(send.str(), false);
                     }
                     if(recv->data[0] == 1) {
-                        retransmit[index] = false;
                         stringstream send;
-                        send << '9' << (char)(recv->data[1]) << (char)(recv->data[2]) << '\0';
-                        cout << recv->data[1] * 256 + recv->data[2] << endl;
-                        sendPacket(send.str());
+                        send << '9' << (char)(recv->data[1]) << (char)(recv->data[2]);
+                        sendPacket(send.str(), false);
+                        cout << "ack sent: " << index << endl;
                     } else {
                         prevIndex = index;
                     }
@@ -440,7 +509,7 @@ int main(int argc, char **argv) {
                         }
                         visited[packetPos] = -1;
                         packetPos++;
-                        if(packetPos >= 256 * 12) {
+                        if(packetPos >= maxPacketCount) {
                             packetPos = 0;
                         }
                         //printf("Received (%i): \n", len);
@@ -454,9 +523,10 @@ int main(int argc, char **argv) {
                 firstReceive = true;
                 packetPos = 0;
                 memset(visited, -1, sizeof(visited));
-                memset(retransmit, false, sizeof(retransmit));
                 prevIndex = -1;
                 index = 0;
+                hpCount = 0;
+                lpCount = 0;
             }
         }
     }
