@@ -1,7 +1,13 @@
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <iostream>
-#include <thread>
+#include <map>
+#include <mutex>
 #include <sstream>
+#include <thread>
+#include <vector>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_net.h>
@@ -19,6 +25,10 @@ using namespace std;
 #define PORT 3478
 constexpr auto maxPacketCount = 256 * 60;
 #define maxByteVal 256
+
+// threads
+atomic<bool> run = true;
+mutex retransMutex;
 
 // SDL
 SDL_Window *screen;
@@ -41,12 +51,45 @@ UDPpacket *packet;
 SDLNet_SocketSet socket_set;
 bool haveClient = false, firstReceive = true;
 
+enum sendPacketTypes {
+    NUMBERED = 1,
+    RETRANSMIT = 2,
+    UNNUMBERED = 3
+};
+
 //retransmission
+const chrono::duration<int, milli> retransmitTimeout = 300ms;
+struct retransmitRequest {
+    chrono::time_point<chrono::steady_clock> start;
+    chrono::duration<int, milli> elapsed = retransmitTimeout;
+};
+map<int, retransmitRequest> retransmits;
+
 char backupBuf[maxPacketCount * 30];
 int backupLens[maxPacketCount];
-int transmitRequest[maxPacketCount];
 int hpCount = 0;
 int lpCount = 0;
+vector<int> unorderedPack;
+
+
+// read buffer
+enum receivePacketType {
+    FRAME = 0,
+    INPUTRETRANSMIT = 1
+};
+struct recvPacket {
+    bool transmitRequested = false;
+    int dataLen = -1;
+    uint8_t data[1500];
+    receivePacketType type;
+    int visited = -1;
+};
+recvPacket buf[maxPacketCount];
+/* int visited[maxPacketCount]; */
+/* bool retransmitRequests [maxPacketCount]; */
+
+
+void unreliableSendPacket(string toSend, bool retransmit);
 
 void clean() {
     SDL_DestroyTexture(texture);
@@ -95,7 +138,7 @@ static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt)
 }
 
 void keepAlive() { 
-    while(1) {
+    while(run) {
         SDL_Delay(200);
         if(haveClient) {
             string opcode = "";
@@ -110,30 +153,88 @@ void keepAlive() {
     }
 }
 
-void sendPacket(string toSend, bool retransmit) {
+void handleRetransmit() { 
+    while(run) {
+        if(haveClient) {
+            chrono::duration<int, milli> min = retransmitTimeout;
+            if(!retransmits.empty()) {
+                auto start = chrono::steady_clock::now();
+                retransMutex.lock();
+                for(auto it = retransmits.begin(); it != retransmits.end(); it++) {
+                    if(it->second.elapsed < min) {
+                        min = it->second.elapsed;
+                    }
+                }
+                cout << "Sleeping for " << min.count() << endl;
+                this_thread::sleep_for(min);
+                auto end = chrono::steady_clock::now();
+                auto passed = end - start;
+                retransMutex.lock();
+                for(auto it = retransmits.begin(); it != retransmits.end(); it++) {
+                    it->second.elapsed -= chrono::milliseconds(passed.count() / 1000000);
+                    if(it->second.elapsed.count() <= 0) {
+                        stringstream send;
+                        send << (char)(it->first / maxByteVal) << (char)(it->first % maxByteVal);
+                        for(int j = 0; j < backupLens[it->first]; j++) {
+                            send << (char)(backupBuf[it->first*30 + j]);
+                        }
+                        for(int i = 0; i < send.str().length(); i++) {
+                            cout << (int)((uint8_t)send.str()[i]) << " ";
+                        }
+                        cout << endl;
+                        unreliableSendPacket(send.str(), true);
+                        it->second.elapsed = retransmitTimeout;
+                    }
+                }
+                retransMutex.unlock();
+            } else {
+                this_thread::sleep_for(min);
+            }
+        } else {
+            SDL_Delay(200);
+        }
+    }
+}
+
+
+void sendPacket(string toSend) {
+    stringstream send;
+    // 1 for first time numbered transmission
+    send << (char)NUMBERED << (char)hpCount << (char)lpCount << toSend;
+    packet->len = send.str().length() + 1;
+    if(packet->len < 4) {
+        cout << "Small packet len: " << send.str().length() << " " << send.str() << endl;
+    }
+    memcpy(packet->data, send.str().c_str(), packet->len);
+    memcpy(&backupBuf[(hpCount * maxByteVal + lpCount) * 30], toSend.c_str(), packet->len - 3);
+    backupLens[hpCount * maxByteVal + lpCount] = packet->len;
+
+    lpCount++;
+    if(lpCount > 255) {
+        lpCount = 0;
+        hpCount++;
+        if(hpCount > 59) {
+            hpCount = 0;
+        }
+    }
+
+    int len = SDLNet_UDP_Send(sock, -1, packet);
+    if(len == 0) {
+        cout << SDLNet_GetError();
+    }
+}
+
+void unreliableSendPacket(string toSend, bool retransmit) {
     stringstream send;
     if(!retransmit) {
-        send << (char)1 << (char)hpCount << (char)lpCount << toSend;
-        packet->len = send.str().length() + 1;
-        memcpy(packet->data, send.str().c_str(), packet->len);
-        memcpy(&backupBuf[(hpCount * maxByteVal + lpCount) * 30], toSend.c_str(), packet->len - 3);
-        backupLens[hpCount * maxByteVal + lpCount] = packet->len;
-
-        lpCount++;
-        if(lpCount > 255) {
-            lpCount = 0;
-            hpCount++;
-            if(hpCount > 59) {
-                hpCount = 0;
-            }
-        }
-
+        // 3 for first time unnumbered transmission
+        send << (char)UNNUMBERED << toSend;
     } else {
-        send << (char)2 << toSend;
-        packet->len = send.str().length() + 1;
-        memcpy(packet->data, send.str().c_str(), packet->len);
-
+        // 2 for data retransmission
+        send << (char)RETRANSMIT << toSend;
     }
+    packet->len = send.str().length() + 1;
+    memcpy(packet->data, send.str().c_str(), packet->len);
     int len = SDLNet_UDP_Send(sock, -1, packet);
     if(len == 0) {
         cout << SDLNet_GetError();
@@ -141,7 +242,9 @@ void sendPacket(string toSend, bool retransmit) {
 }
 
 int main(int argc, char **argv) {
-    thread t(keepAlive);
+
+    thread alive(keepAlive);
+    thread retransmit(handleRetransmit);
     // ffmpeg setup
 
     pkt = av_packet_alloc();
@@ -229,18 +332,17 @@ int main(int argc, char **argv) {
     UDPpacket *recv = SDLNet_AllocPacket(INBUF_SIZE);
     socket_set = SDLNet_AllocSocketSet(1);
 
-    // retransmission
-    uint8_t* buf = new uint8_t[maxPacketCount * 1500];
-    int visited[maxPacketCount];
-    int prevIndex = -1, index = -1;
-    int packetPos = 0; // for tracking position in packet queue
-
     //IMGUI state variables
     char port[20] = ""; 
     char ipToTry[30] = "";
 
-    memset(visited, -1, sizeof(visited));
-    memset(transmitRequest, -1, sizeof(transmitRequest));
+    // for tracking position in packet queue
+    int prevIndex = -1, index = -1;
+    int packetPos = 0;
+
+    retransMutex.lock();
+    retransmits.clear();
+    retransMutex.unlock();
     if(socket_set == NULL) {
         cout << "Could not allocate socket set";
         exit(1);
@@ -259,7 +361,7 @@ int main(int argc, char **argv) {
                     if(haveClient) {
                         // '0' used for keydown events
                         int c = evt.key.keysym.sym;
-                        sendPacket("0" + to_string(c), false);
+                        sendPacket("0" + to_string(c));
                     }
                     break;
                 }
@@ -268,7 +370,7 @@ int main(int argc, char **argv) {
                     if(haveClient) {
                         // '6' used for keyup events
                         int c = evt.key.keysym.sym;
-                        sendPacket("6" + to_string(c), false);
+                        sendPacket("6" + to_string(c));
                     }
                     break;
                 }
@@ -277,7 +379,7 @@ int main(int argc, char **argv) {
                     if(haveClient) {
                         if(evt.motion.x >= 0 && evt.motion.y >= 0 && evt.motion.x <=1920 && evt.motion.y<=1080) {
                             string motion = "1" + to_string((float) evt.motion.x / 1920) + "a" + to_string((float) evt.motion.y / 1080);
-                            /* sendPacket(motion, false); */
+                            /* unreliableSendPacket(motion); */
                         }
                     }
                     break;
@@ -289,12 +391,12 @@ int main(int argc, char **argv) {
                         string opcode;
                         switch(evt.button.button) {
                             case SDL_BUTTON_LEFT: {
-                                sendPacket("2", false);
+                                sendPacket("2");
                                 cout << "leftDown" << endl;
                                 break;
                             }
                             case SDL_BUTTON_RIGHT: {
-                                sendPacket("3", false);
+                                sendPacket("3");
                                 cout << "rightDown" << endl;
                                 break;
                             }
@@ -307,12 +409,12 @@ int main(int argc, char **argv) {
                         string opcode;
                         switch(evt.button.button) {
                             case SDL_BUTTON_LEFT: {
-                                sendPacket("4", false);
+                                sendPacket("4");
                                 cout << "leftup" << endl;
                                 break;
                             }
                             case SDL_BUTTON_RIGHT: {
-                                sendPacket("5", false);
+                                sendPacket("5");
                                 cout << "rightup" << endl;
                                 break;
                             }
@@ -419,51 +521,44 @@ int main(int argc, char **argv) {
                 ready = SDLNet_CheckSockets(socket_set, 5000);
             }
             if(ready > 0) {
-                for (int i = 0; i < maxPacketCount; i++) {
-                    if (transmitRequest[i] == 0) {
-                        stringstream send;
-                        send << (char)(i / maxByteVal) << (char)(i % maxByteVal);
-                        for(int j = 0; j < backupLens[i]; j++) {
-                            send << (char)(backupBuf[i*30 + j]);
-                        }
-                        sendPacket(send.str(), true);
-                        transmitRequest[i] = 60;
-                    }
-                    else if (transmitRequest[i] != -1) {
-                        transmitRequest[i]--;
-                    }
-                }
                 SDLNet_UDP_Recv(sock, recv);
                 /* cout << "length: " << recv->len << endl; */
                 /* cout << recv->data << endl; */
                 if((uint8_t) recv->data[0] == 2) {
 
-                } else if((uint8_t) recv->data[0] == 3) {
-                    int sHigh, sLow, eHigh, eLow;
-                    sHigh = (uint8_t)recv->data[1];
-                    sLow = (uint8_t)recv->data[2];
-                    eHigh = (uint8_t)recv->data[3];
-                    eLow = (uint8_t)recv->data[4];
-                    if (sHigh < 60 && eHigh < 60) {
-                        int beginning = sHigh * maxByteVal + sLow;
-                        int end = eHigh * maxByteVal + eLow;
-                        cout << "Retransmit " << beginning << " " << end << endl;
-                        for (int i = beginning; i != end; i = (i + 1) % maxPacketCount) {
-                            transmitRequest[i] = 0;
-                        }
-                    }
-
                 } else if ((uint8_t) recv->data[0] == 4) {
                     int index = (recv->data[1]) * maxByteVal + recv->data[2];
                     cout << "ack received" << index << endl;
-                    transmitRequest[index] = -1;
+                    buf[index].transmitRequested = false;
+                    /* retransmitRequests[index] = false; */
+                    retransMutex.lock();
+                    retransmits.erase(index);
+                    retransMutex.unlock();
                 } else if ((uint8_t) recv->data[0] == 5) {
                     for(int i = 1; i < recv->len; i+=2) {
                         if (i+1 < recv->len) {
                             index = (int) ((recv->data[i]) * maxByteVal + (recv->data[i+1]));
                             cout << "Retransmit " << index << endl;
                             if(index < maxPacketCount) {
-                                transmitRequest[index] = 0;
+                                stringstream send;
+                                send << (char)(index / maxByteVal);
+                                send << (char)(index % maxByteVal);
+                                for(int j = 0; j < backupLens[index]; j++) {
+                                    send << (char)(backupBuf[index*30 + j]);
+                                }
+
+                                for(int j = 0; j < send.str().length(); j++) {
+                                    cout << (int)send.str()[j] << " ";
+                                }
+                                cout << endl;
+
+                                unreliableSendPacket(send.str(), true);
+                                retransmitRequest req;
+                                req.start = chrono::steady_clock::now();
+
+                                retransMutex.lock();
+                                retransmits.emplace(index, req);
+                                retransMutex.unlock();
                             }
                         }
                     }
@@ -473,26 +568,117 @@ int main(int argc, char **argv) {
                     int ret;
 
                     index = (int) ((recv->data[1]) * maxByteVal + (recv->data[2]));
-                    memcpy(&buf[index * 1400], data, data_size);
-                    visited[index] = data_size;
+                    cout << index << endl;
+                    memcpy(&buf[index].data, data, data_size);
+                    buf[index].visited = data_size;
 
-                    if(((prevIndex + 1) % maxPacketCount) != index && recv->data[0] == 0) {
-                        cout << "Packets Dropped: " << min(abs(index - prevIndex), maxPacketCount - abs(index - prevIndex)) << endl << "Index: " << index << "\nPrev: " << prevIndex << endl << endl;
-                        stringstream send;
-                        send << '8' << (char)(((prevIndex + 1) % maxPacketCount) / maxByteVal) << (char)(((prevIndex + 1) % maxPacketCount) % maxByteVal) << (char)(recv->data[1]) << (char)(recv->data[2]);
-                        sendPacket(send.str(), false);
-                    }
-                    if(recv->data[0] == 1) {
-                        stringstream send;
-                        send << '9' << (char)(recv->data[1]) << (char)(recv->data[2]);
-                        sendPacket(send.str(), false);
-                        cout << "ack sent: " << index << endl;
+                    auto match = find(unorderedPack.begin(), unorderedPack.end(), index);
+                    if (match != unorderedPack.end()) {
+                        unorderedPack.erase(match);
                     } else {
-                        prevIndex = index;
+                        if (unorderedPack.size() > 0) {
+                            auto minVal = min_element(unorderedPack.begin(), unorderedPack.end());
+                            int unorderedDiff = min(abs(index - *minVal), maxPacketCount - abs(index - *minVal));
+                            if(unorderedDiff > 5 || unorderedPack.size() >= 5) {
+                                stringstream send;
+                                send << '7';
+                                for (auto it = unorderedPack.begin(); it != unorderedPack.end(); it++) {
+                                    if(!buf[*it].transmitRequested) {
+                                        send << (char)(*it / maxByteVal);
+                                        send << (char)(*it % maxByteVal);
+                                        buf[*it].transmitRequested = true;
+                                    }
+                                }
+                                unorderedPack.clear();
+                                sendPacket(send.str());
+                            }
+                        }
+
+                        if((prevIndex + 1) % maxPacketCount != index && recv->data[0] == 0) {
+                            int diff = min(abs(index - prevIndex), maxPacketCount - abs(index - prevIndex));
+                            cout << "Packets Dropped: " << (diff - 1) << endl << "Index: " << index << "\nPrev: " << prevIndex << endl << endl;
+                            int smaller, bigger;
+                            if (diff == abs(index - prevIndex)) {
+                                smaller = prevIndex;
+                                bigger = index;
+                            }
+                            else {
+                                smaller = index;
+                                bigger = prevIndex;
+                            }
+                            if (diff < 5) {
+                                for (int i = smaller + 1; i < bigger; i = (i + 1) % (maxPacketCount)) {
+                                    unorderedPack.push_back(i);
+                                }
+                            } else {
+                                stringstream send;
+                                send << '7';
+                                for (int i = smaller + 1; i < bigger; i++) {
+                                    if(!buf[i].transmitRequested) {
+                                        send << (char)(i / maxByteVal);
+                                        send << (char)(i % maxByteVal);
+                                        buf[i].transmitRequested = true;
+                                    }
+                                }
+                                /* send << '8' << (char)(((prevIndex + 1) % maxPacketCount) / maxByteVal) << (char)(((prevIndex + 1) % maxPacketCount) % maxByteVal) << (char)(recv->data[1]) << (char)(recv->data[2]); */
+                                sendPacket(send.str());
+                            }
+                        }
+
+                        if((uint8_t) recv->data[0] == 3) {
+                            int sHigh, sLow, eHigh, eLow;
+                            sHigh = (uint8_t)recv->data[1];
+                            sLow = (uint8_t)recv->data[2];
+                            eHigh = (uint8_t)recv->data[3];
+                            eLow = (uint8_t)recv->data[4];
+                            if (sHigh < 60 && eHigh < 60) {
+                                int beginning = sHigh * maxByteVal + sLow;
+                                int end = eHigh * maxByteVal + eLow;
+                                int diff = min(abs(beginning - end), maxPacketCount - abs(beginning - end));
+                                int smaller, bigger;
+                                if (diff == abs(beginning - end)) {
+                                    smaller = end;
+                                    bigger = beginning;
+                                }
+                                else {
+                                    smaller = beginning;
+                                    bigger = end;
+                                }
+                                cout << "Retransmit " << beginning << " " << end << endl;
+                                for (int i = beginning; i < end; i = (i + 1) % maxPacketCount) {
+                                    stringstream send;
+                                    send << (char)(i / maxByteVal) << (char)(i % maxByteVal);
+                                    for(int j = 0; j < backupLens[i]; j++) {
+                                        send << (char)(backupBuf[i*30 + j]);
+                                    }
+                                    for(int j = 0; j < send.str().length(); j++) {
+                                        cout << (int)send.str()[j] << " ";
+                                    }
+                                    cout << endl;
+
+                                    unreliableSendPacket(send.str(), true);
+
+                                    retransmitRequest req;
+                                    req.start = chrono::steady_clock::now();
+                                    retransMutex.lock();
+                                    retransmits.emplace(i, req);
+                                    retransMutex.unlock();
+                                }
+                            }
+
+                            if(recv->data[0] == 1) {
+                            stringstream send;
+                            send << '9' << (char)(recv->data[1]) << (char)(recv->data[2]);
+                            unreliableSendPacket(send.str(), false);
+                            cout << "ack sent: " << index << endl;
+                        } else {
+                            prevIndex = index;
+                        }
                     }
-                    while(visited[packetPos] != -1) {
-                        data_size = visited[packetPos];
-                        Uint8* bufPtr = &buf[packetPos * 1400];
+
+                    while(buf[packetPos].visited != -1) {
+                        data_size = buf[packetPos].visited;
+                        Uint8* bufPtr = buf[packetPos].data;
                         while(data_size > 0) {
                             ret = av_parser_parse2(parser, c, &pkt->data, &pkt->size,
                                     bufPtr, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
@@ -507,7 +693,7 @@ int main(int argc, char **argv) {
                                 decode(c, frame, pkt);
                             }
                         }
-                        visited[packetPos] = -1;
+                        buf[packetPos].visited = -1;
                         packetPos++;
                         if(packetPos >= maxPacketCount) {
                             packetPos = 0;
@@ -515,18 +701,22 @@ int main(int argc, char **argv) {
                         //printf("Received (%i): \n", len);
                     }
                 }
-            } else {
+            }
+        } else {
                 SDLNet_UDP_Close(sock);
                 SDLNet_UDP_DelSocket(socket_set, sock);
                 sock = NULL;
                 haveClient = false;
                 firstReceive = true;
                 packetPos = 0;
-                memset(visited, -1, sizeof(visited));
+                for(int i = 0; i < maxPacketCount; i++) {
+                    buf[i].visited = -1;
+                }
                 prevIndex = -1;
                 index = 0;
                 hpCount = 0;
                 lpCount = 0;
+                unorderedPack.clear();
             }
         }
     }
@@ -539,4 +729,8 @@ int main(int argc, char **argv) {
     clean();
     SDLNet_Quit();
     SDL_Quit();
+
+    run = false;
+    alive.join();
+    retransmit.join();
 }
