@@ -360,7 +360,7 @@ int main(int argc, char **argv) {
 
     //IMGUI state variables
     char port[20] = ""; 
-    char ipToTry[30] = "";
+    char ipToTry[30] = "167.234.216.217";
 
     // for tracking position in packet queue
     int prevIndex = -1, index = -1;
@@ -498,8 +498,7 @@ int main(int argc, char **argv) {
             submit = false;
             IPaddress ip;
             long temp = strtol(port, NULL, 10);
-            if (SDLNet_ResolveHost(&ip, "167.234.216.217", (uint16_t) PORT) == -1) {
-            /* if (SDLNet_ResolveHost(&ip, "127.0.0.1", (uint16_t) PORT) == -1) { */ 
+            if (SDLNet_ResolveHost(&ip, ipToTry, (uint16_t) PORT) == -1) {
                 cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
             } else {
                 sock = SDLNet_UDP_Open(0);
@@ -527,7 +526,7 @@ int main(int argc, char **argv) {
                             cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
                         } else {
                             cout << "setting peer address and port" << endl;
-                            /* packet->address = ip; */
+                            packet->address = ip;
                         }
                         SDLNet_UDP_AddSocket(socket_set, sock);
 
