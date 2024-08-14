@@ -2,7 +2,7 @@ PROJECTNAME = remoteDesktopClient
 OUTPUT_DIR = build
 
 INCLUDE_DIRS = -Iinclude/
-LIBS = -lavcodec -lavutil -lavformat -lSDL2main -lSDL2 -lSDL2_net
+LIBS = -lavcodec -lavutil -lavformat -lSDL2main -lSDL2 -lSDL2_net -lcrypto -lssl
 
 SRC = $(wildcard src/*.cpp) $(wildcard imgui/*.cpp)
 

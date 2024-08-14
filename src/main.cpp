@@ -9,15 +9,21 @@
 #include <thread>
 #include <vector>
 
+// GUI
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_net.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_sdlrenderer2.h>
 
+// FFMPEG
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 }
+
+// Encryption
+#include <openssl/evp.h>
+#include <openssl/aes.h>
 
 using namespace std;
 
@@ -56,6 +62,68 @@ enum sendPacketTypes {
     RETRANSMIT = 2,
     UNNUMBERED = 3
 };
+
+/* ctx structures that libcrypto used to record encryption/decryption status */
+EVP_CIPHER_CTX* en = EVP_CIPHER_CTX_new();
+EVP_CIPHER_CTX* de = EVP_CIPHER_CTX_new();
+
+// Create 128 bit key and IV using key_data and 8 byte salt and initializes ctx objects
+int aes_init(string key_data, int key_data_len, unsigned char* salt, EVP_CIPHER_CTX* e_ctx,
+		EVP_CIPHER_CTX* d_ctx)
+{
+	int i, nrounds = 5;
+	unsigned char key[32], iv[32];
+
+	/*
+	 * Generate key & IV for AES 128 CBC mode. SHA1 digest is used to hash the supplied key material.
+	 */
+	i = EVP_BytesToKey(EVP_aes_128_cbc(), EVP_sha1(), salt, (unsigned char*) key_data.c_str(), key_data_len, nrounds, key, iv);
+
+	EVP_CIPHER_CTX_init(e_ctx);
+	EVP_EncryptInit_ex(e_ctx, EVP_aes_128_cbc(), NULL, key, iv);
+	EVP_CIPHER_CTX_init(d_ctx);
+	EVP_DecryptInit_ex(d_ctx, EVP_aes_128_cbc(), NULL, key, iv);
+
+	return 0;
+}
+
+// Apply aes-128 encryption based on key and iv values
+// All data going in & out is considered binary
+unsigned char* aes_encrypt(EVP_CIPHER_CTX* e, unsigned char* plaintext, int* len)
+{
+	/* max ciphertext len for a n bytes of plaintext is n + AES_BLOCK_SIZE -1 bytes */
+	int c_len = *len + AES_BLOCK_SIZE, f_len = 0;
+	unsigned char* ciphertext = new unsigned char[c_len];
+
+	/* allows reusing of 'e' for multiple encryption cycles */
+	EVP_EncryptInit_ex(e, NULL, NULL, NULL, NULL);
+
+	/* update ciphertext, c_len is filled with the length of ciphertext generated, *len is the size of plaintext in bytes */
+	EVP_EncryptUpdate(e, ciphertext, &c_len, plaintext, *len);
+
+	/* update ciphertext with the final remaining bytes */
+	EVP_EncryptFinal_ex(e, ciphertext + c_len, &f_len);
+
+	*len = c_len + f_len;
+	return ciphertext;
+}
+
+// Decrypt aes-128 encryption based on key and iv values
+unsigned char* aes_decrypt(EVP_CIPHER_CTX* e, unsigned char* ciphertext, int* len)
+{
+	/* plaintext will always be equal to or lesser than length of ciphertext*/
+	int p_len = *len, f_len = 0;
+	unsigned char* plaintext = new unsigned char[p_len];
+
+	EVP_DecryptInit_ex(e, NULL, NULL, NULL, NULL);
+	EVP_DecryptUpdate(e, plaintext, &p_len, ciphertext, *len);
+	EVP_DecryptFinal_ex(e, plaintext + p_len, &f_len);
+
+	*len = p_len + f_len;
+	return plaintext;
+}
+
+
 
 //retransmission
 const chrono::duration<int, milli> retransmitTimeout = 300ms;
@@ -271,6 +339,21 @@ int main(int argc, char **argv) {
 
     thread alive(keepAlive);
     thread retransmit(handleRetransmit);
+
+    // 8 bytes of salt data
+    unsigned int salt[] = { 12345, 54321 };
+
+    string key_data = "2B28AB097EAEF7CF15D2154F16A6883C";
+    int key_data_len, i;
+
+    key_data_len = key_data.length();
+
+    /* gen key and iv. init the cipher ctx object */
+    if (aes_init(key_data, key_data_len, (unsigned char*)&salt, en, de)) {
+	    printf("Couldn't initialize AES cipher\n");
+	    return -1;
+    }
+
     // ffmpeg setup
 
     pkt = av_packet_alloc();
@@ -526,7 +609,7 @@ int main(int argc, char **argv) {
                             cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
                         } else {
                             cout << "setting peer address and port" << endl;
-                            packet->address = ip;
+                            //packet->address = ip;
                         }
                         SDLNet_UDP_AddSocket(socket_set, sock);
 
@@ -575,8 +658,12 @@ int main(int argc, char **argv) {
                         cout << "ack sent: " << index << endl;
                     }
                     if(compareSeqNum(index, packetPos) >= 0) {
-                        memcpy(&buf[index].data, data, data_size);
-                        buf[index].visited = data_size;
+
+			int len = data_size;
+			unsigned char* plaintext = aes_decrypt(de, (unsigned char*)data, &len);
+
+                        memcpy(&buf[index].data, plaintext, len);
+                        buf[index].visited = len;
 
                         auto match = find(unorderedPack.begin(), unorderedPack.end(), index);
                         if (match != unorderedPack.end()) {
