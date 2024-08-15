@@ -444,6 +444,7 @@ int main(int argc, char **argv) {
     //IMGUI state variables
     char port[20] = ""; 
     char ipToTry[30] = "167.234.216.217";
+    static int p2p = 1;
 
     // for tracking position in packet queue
     int prevIndex = -1, index = -1;
@@ -549,6 +550,8 @@ int main(int argc, char **argv) {
             ImGui::NewLine();
             ImGui::InputText("IP Address", ipToTry, IM_ARRAYSIZE(ipToTry));
             ImGui::InputText("Port", port, IM_ARRAYSIZE(port));
+            ImGui::RadioButton("UDP P2P", &p2p, 1); 
+            ImGui::RadioButton("UDP TURN", &p2p, 0);
             if (ImGui::Button("Submit")) {
                 submit = true;
                 /* ImGui::OpenPopup("Disconnect"); */
@@ -609,7 +612,9 @@ int main(int argc, char **argv) {
                             cout << "SDLNet_ResolveHost: " << SDLNet_GetError();
                         } else {
                             cout << "setting peer address and port" << endl;
-                            //packet->address = ip;
+                            if(p2p == 1) {
+                                packet->address = ip;
+                            }
                         }
                         SDLNet_UDP_AddSocket(socket_set, sock);
 
